@@ -61,24 +61,37 @@ module fsmc_interface(
 
 
 
-    // ----------------地址和数据捕获-----------------
-    logic ready_to_read_data;// 准备读取数据AD的数据
-    logic ready_to_read_addr;// 准备读取地址
-	logic addr_capture, data_capture;// 地址和数据捕获信号
-    logic noe_posedge_capture,noe_negedge_capture;// noe的时钟沿
+	// ----------------地址和数据捕获-----------------
+	logic ready_to_read_data; // 准备读取数据AD的数据
+	logic ready_to_read_addr; // 准备读取地址
+	logic addr_capture, data_capture; // 地址和数据捕获信号
+	logic noe_posedge_capture, noe_negedge_capture; // noe的时钟沿
+
+	// 提前计算边缘检测信号，以减少组合逻辑延迟
+	logic pre_addr_capture, pre_data_capture;
+	logic pre_noe_posedge_capture, pre_noe_negedge_capture;
+
+	always_comb begin
+		pre_addr_capture = ~nadv_sync_d1 & nadv_sync;
+		pre_data_capture = ~nwe_sync_d1 & nwe_sync;
+		pre_noe_posedge_capture = ~noe_sync_d1 & noe_sync;
+		pre_noe_negedge_capture = noe_sync_d1 & ~noe_sync;
+	end
 
 	always_ff @(posedge clk or negedge reset) begin
 		if (!reset) begin
 			ready_to_read_addr <= 0;
 			ready_to_read_data <= 0;
+			addr_capture <= 0;
+			data_capture <= 0;
+			noe_posedge_capture <= 0;
+			noe_negedge_capture <= 0;
 		end else begin
 			// 上升沿处捕获地址或数据
-			addr_capture = ~nadv_sync_d1 & nadv_sync;
-			data_capture = ~nwe_sync_d1 & nwe_sync;
-
-            // 捕获noe时钟沿
-            noe_posedge_capture = ~noe_sync_d1 & noe_sync;
-            noe_negedge_capture = noe_sync_d1 & ~noe_sync;
+			addr_capture <= pre_addr_capture;
+			data_capture <= pre_data_capture;
+			noe_posedge_capture <= pre_noe_posedge_capture;
+			noe_negedge_capture <= pre_noe_negedge_capture;
 
 			if (addr_capture || data_capture) begin
 				module_in <= ad_in[15:0];
@@ -98,8 +111,13 @@ module fsmc_interface(
 	end
 
 	// ------------------写入控制------------------
-    logic write_trigger;
-    logic write_enable;
+	logic write_trigger;
+	logic write_enable;
+
+	always_comb begin
+		write_trigger = noe_negedge_capture & cs_state;
+	end
+
 	always_ff @(posedge clk or negedge reset) begin
 		if (!reset) begin
 			en_cs <= '0;
@@ -107,8 +125,6 @@ module fsmc_interface(
 			ad_dir <= 0;
 		end else begin
 			// noe的下降沿触发时，如果en_cs有效则写入
-			write_trigger = noe_negedge_capture & cs_state;
-			
 			if (write_trigger) begin
 				write_enable <= 1;
 			end else if (~noe_sync) begin
@@ -126,7 +142,7 @@ module fsmc_interface(
 			// 简化片选逻辑
 			if (ready_to_read_addr) begin
 				en_cs <= '1;
-			end else if (ready_to_read_data | (noe_posedge_capture)) begin
+			end else if (ready_to_read_data | noe_posedge_capture) begin
 				en_cs <= '0;
 			end
 		end
