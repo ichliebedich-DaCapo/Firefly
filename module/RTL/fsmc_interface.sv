@@ -64,48 +64,58 @@ module fsmc_interface(
     // ----------------地址和数据捕获-----------------
     logic ready_to_read_data;// 准备读取数据AD的数据
     logic ready_to_read_addr;// 准备读取地址
+	logic addr_capture, data_capture;// 地址和数据捕获信号
+    logic noe_posedge_capture,noe_negedge_capture;// noe的时钟沿
+
 	always_ff @(posedge clk or negedge reset) begin
 		if (!reset) begin
-            ready_to_read_addr <= 0;
-            ready_to_read_data <= 0;
+			ready_to_read_addr <= 0;
+			ready_to_read_data <= 0;
 		end else begin
 			// 上升沿处捕获地址或数据
-			if (~nadv_sync_d1 & nadv_sync) begin
+			addr_capture = ~nadv_sync_d1 & nadv_sync;
+			data_capture = ~nwe_sync_d1 & nwe_sync;
+
+            // 捕获noe时钟沿
+            noe_posedge_capture = ~noe_sync_d1 & noe_sync;
+            noe_negedge_capture = noe_sync_d1 & ~noe_sync;
+
+			if (addr_capture || data_capture) begin
 				module_in <= ad_in[15:0];
-                cs_addr_latch <= ad_in[17:15]; // 片选地址捕获
-                ready_to_read_addr <= 1;
-			end else if (~nwe_sync_d1 & nwe_sync) begin
-                // nwe上升沿捕获数据
-				module_in <= ad_in[15:0];
-                ready_to_read_data <= 1;
-            end else begin
-                ready_to_read_addr <= 0;
-                ready_to_read_data <= 0;
-            end
+				if (addr_capture) begin
+					cs_addr_latch <= ad_in[17:15]; // 片选地址捕获
+					ready_to_read_addr <= 1;
+					ready_to_read_data <= 0;
+				end else if (data_capture) begin
+					ready_to_read_data <= 1;
+					ready_to_read_addr <= 0;
+				end
+			end else begin
+				ready_to_read_addr <= 0;
+				ready_to_read_data <= 0;
+			end
 		end
 	end
 
-
-
-
-    // 写入控制
-	logic write_enable;
-
+	// ------------------写入控制------------------
+    logic write_trigger;
+    logic write_enable;
 	always_ff @(posedge clk or negedge reset) begin
 		if (!reset) begin
 			en_cs <= '0;
 			write_enable <= 0;
 			ad_dir <= 0;
-			ad_out <= 0;
 		end else begin
-
 			// noe的下降沿触发时，如果en_cs有效则写入
-			if (noe_sync_d1 & ~noe_sync & cs_state) begin
+			write_trigger = noe_negedge_capture & cs_state;
+			
+			if (write_trigger) begin
 				write_enable <= 1;
-			end else if (noe_sync) begin
+			end else if (~noe_sync) begin
 				write_enable <= 0;
 			end
-			// 低电平持续写入
+			
+			// 输出
 			if (write_enable) begin
 				ad_dir <= 1;
 				ad_out[15:0] <= module_out;
@@ -113,23 +123,14 @@ module fsmc_interface(
 				ad_dir <= 0;
 			end
 
-            // 在nadc上升沿后的一个周期，使能片选
-            if(ready_to_read_addr)begin
-                en_cs <= '1;
-            end  
-
-            // nwe的上升沿后的一个周期或noe上升沿，重置片选
-            if(ready_to_read_data | ~noe_sync_d1 & noe_sync)begin
-                en_cs <= '0;
-            end
-
-
+			// 简化片选逻辑
+			if (ready_to_read_addr) begin
+				en_cs <= '1;
+			end else if (ready_to_read_data | (noe_posedge_capture)) begin
+				en_cs <= '0;
+			end
 		end
 	end
-
-
-
-
 
 
 
